@@ -1,3 +1,0 @@
-/home/deadpool/HUNTER/pmfs/pmfs.ko
-/home/deadpool/HUNTER/pmfs/bbuild.o /home/deadpool/HUNTER/pmfs/balloc.o /home/deadpool/HUNTER/pmfs/dir.o /home/deadpool/HUNTER/pmfs/file.o /home/deadpool/HUNTER/pmfs/inode.o /home/deadpool/HUNTER/pmfs/namei.o /home/deadpool/HUNTER/pmfs/super.o /home/deadpool/HUNTER/pmfs/symlink.o /home/deadpool/HUNTER/pmfs/ioctl.o /home/deadpool/HUNTER/pmfs/pmfs_stats.o /home/deadpool/HUNTER/pmfs/journal.o /home/deadpool/HUNTER/pmfs/xip.o /home/deadpool/HUNTER/pmfs/wprotect.o
-
