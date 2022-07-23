@@ -23,6 +23,7 @@
 #include <linux/uio.h>
 #include <linux/version.h>
 #include <linux/pfn_t.h>
+#include "nvmtracer.h"
 
 #include "pmfs_def.h"
 #include "journal.h"
@@ -126,6 +127,27 @@ enum timing_category {
 	free_tree_t,
 	evict_inode_t,
 	recovery_t,
+	find_data_block_t,
+	read_metablock_t,
+	write_metablock_t,
+	read_pi_i_blk_type_t,
+	read_pi_height_t,
+	read_pi_i_blocks_t,
+	write_pi_time_and_size_t,
+	write_pi_time_t,
+	write_pi_size_t,
+	write_pi_root_t,
+	write_pi_height_t,
+	write_pi_i_blocks_t,
+	pmfs_clean_journal_t,
+	write_trans_tail_t,
+	read_trans_tail_t,
+	read_trans_head_t,
+	read_trans_base_t,
+	read_trans_genid_t,
+	write_log_entry_t,
+	write_data_t,
+	prefetch_t,
 	TIMING_NUM,
 };
 
@@ -152,6 +174,11 @@ typedef struct timespec timing_t;
 			(end.tv_nsec - start.tv_nsec); \
 	} \
 	Countstats[name]++; \
+	}
+
+#define PMFS_TIMING_ALIAS(alias, name) \
+	{Timingstats[alias] = Timingstats[name]; \
+	Countstats[alias] = Countstats[name]; \
 	}
 
 /* Function Prototypes */
@@ -426,9 +453,9 @@ static inline void pmfs_memcpy_atomic (void *dst, const void *src, u8 size)
 static inline void pmfs_update_time_and_size(struct inode *inode,
 	struct pmfs_inode *pi)
 {
+
 	__le32 words[2];
 	__le64 new_pi_size = cpu_to_le64(i_size_read(inode));
-
 	/* pi->i_size, pi->i_ctime, and pi->i_mtime need to be atomically updated.
  	* So use cmpxchg16b here. */
 	words[0] = cpu_to_le32(inode->i_ctime.tv_sec);
@@ -483,7 +510,9 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 	u64 bp = 0;
 	u32 height, bit_shift;
 	unsigned int idx;
+	timing_t t, access_time;
 
+	PMFS_START_TIMING(find_data_block_t, t);
 	height = pi->height;
 	bp = le64_to_cpu(pi->root);
 
@@ -491,12 +520,19 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 		level_ptr = pmfs_get_block(sb, bp);
 		bit_shift = (height - 1) * META_BLK_SHIFT;
 		idx = blocknr >> bit_shift;
+
+		PMFS_START_TIMING(read_metablock_t, access_time);
 		bp = le64_to_cpu(level_ptr[idx]);
+		PMFS_END_TIMING(read_metablock_t, access_time);
+		
+		trace_nvm_access(NVM_READ, "Access Meta Block", PMFS_SB(sb)->virt_addr, level_ptr + idx, sizeof(u64));
+
 		if (bp == 0)
 			return 0;
 		blocknr = blocknr & ((1 << bit_shift) - 1);
 		height--;
 	}
+	PMFS_END_TIMING(find_data_block_t, t);
 	return bp;
 }
 

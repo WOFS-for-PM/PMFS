@@ -20,6 +20,27 @@ const char *Timingstring[TIMING_NUM] =
 	"free_tree",
 	"evict_inode",
 	"recovery",
+	"find_block",
+	"read_meta_block",
+	"write_meta_block",
+	"read_pi_i_blk_type",
+	"read_pi_height",
+	"read_pi_i_blocks",
+	"write_pi_time_and_size",
+	"write_pi_time",
+	"write_pi_size",
+	"write_pi_root",
+	"write_pi_height",
+	"write_pi_i_blocks",
+	"pmfs_clean_journal",
+	"new_trans_alloc_tail",
+	"read_trans_tail",
+	"read_trans_head",
+	"read_trans_base",
+	"read_trans_genid",
+	"write_log_entry",
+	"write_data",
+	"prefetch"
 };
 
 unsigned long long Timingstats[TIMING_NUM];

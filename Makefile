@@ -9,5 +9,8 @@ pmfs-y := bbuild.o balloc.o dir.o file.o inode.o namei.o super.o symlink.o ioctl
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=`pwd`
 
+trace:
+	make EXTRA_CFLAGS=-DTRACER_ENABLE -C /lib/modules/$(shell uname -r)/build M=`pwd`
+
 clean:
 	make -C /lib/modules/$(shell uname -r)/build M=`pwd` clean

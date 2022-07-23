@@ -206,6 +206,8 @@ __pmfs_xip_file_write(struct address_space *mapping, const char __user *buf,
 		copied = memcpy_to_nvmm((char *)xmem, offset, buf, bytes);
 		pmfs_xip_mem_protect(sb, xmem + offset, bytes, 0);
 		PMFS_END_TIMING(memcpy_w_t, memcpy_time);
+		PMFS_TIMING_ALIAS(write_data_t, memcpy_w_t);
+		trace_nvm_access(NVM_WRITE, "Write Data", PMFS_SB(sb)->virt_addr, xmem + offset, copied);
 
 		/* if start or end dest address is not 8 byte aligned, 
 	 	 * __copy_from_user_inatomic_nocache uses cacheable instructions
@@ -252,6 +254,7 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 	void *xmem = pmfs_get_block(sb, block);
 	size_t copied, ret = 0, offset;
 	timing_t memcpy_time;
+	timing_t t;
 
 	offset = pos & (sb->s_blocksize - 1);
 
@@ -260,6 +263,9 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 	copied = memcpy_to_nvmm((char *)xmem, offset, buf, count);
 	pmfs_xip_mem_protect(sb, xmem + offset, count, 0);
 	PMFS_END_TIMING(memcpy_w_t, memcpy_time);
+	PMFS_TIMING_ALIAS(write_data_t, memcpy_w_t);
+	trace_nvm_access(NVM_WRITE, "Write Data", PMFS_SB(sb)->virt_addr, xmem + offset, copied);
+
 
 	pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
 
@@ -291,7 +297,12 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 		pmfs_memcpy_atomic(&pi->i_ctime, &c_m_time, 8);
 		pmfs_memlock_inode(sb, pi);
 	}
+	
+	PMFS_START_TIMING(write_pi_time_and_size_t, t);
 	pmfs_flush_buffer(pi, 1, false);
+	PMFS_END_TIMING(write_pi_time_and_size_t, t);
+	trace_nvm_access(NVM_WRITE, "Update and Flush Inode's Attr", PMFS_SB(inode->i_sb)->virt_addr, (char *)pi, CACHELINE_SIZE);
+	
 	return ret;
 }
 
@@ -343,6 +354,8 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	unsigned long start_blk, end_blk, num_blocks, max_logentries;
 	bool same_block;
 	timing_t xip_write_time, xip_write_fast_time;
+	timing_t t;
+	u8 i_blk_type;
 
 	PMFS_START_TIMING(xip_write_t, xip_write_time);
 
@@ -361,11 +374,16 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	}
 
 	pi = pmfs_get_inode(sb, inode->i_ino);
-
+	
+	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
+	i_blk_type = pi->i_blk_type;
+	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
+	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
+	
 	offset = pos & (sb->s_blocksize - 1);
 	num_blocks = ((count + offset - 1) >> sb->s_blocksize_bits) + 1;
 	/* offset in the actual block size block */
-	offset = pos & (pmfs_inode_blk_size(pi) - 1);
+	offset = pos & (blk_type_to_size[i_blk_type] - 1);
 	start_blk = pos >> sb->s_blocksize_bits;
 	end_blk = start_blk + num_blocks - 1;
 
@@ -373,7 +391,7 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 
 	/* Referring to the inode's block size, not 4K */
 	same_block = (((count + offset - 1) >>
-			pmfs_inode_blk_shift(pi)) == 0) ? 1 : 0;
+			blk_type_to_shift[i_blk_type]) == 0) ? 1 : 0;
 	if (block && same_block) {
 		PMFS_START_TIMING(xip_write_fast_t, xip_write_fast_time);
 		ret = pmfs_file_write_fast(sb, inode, pi, buf, count, pos,
@@ -407,7 +425,7 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 		    new_sblk = true;
 	}
 
-	eblk_offset = (pos + count) & (pmfs_inode_blk_size(pi) - 1);
+	eblk_offset = (pos + count) & (blk_type_to_size[i_blk_type] - 1);
 	if ((eblk_offset != 0) &&
 			(pmfs_find_data_block(inode, end_blk) == 0))
 		new_eblk = true;

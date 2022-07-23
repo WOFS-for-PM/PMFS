@@ -35,14 +35,26 @@ uint32_t blk_type_to_size[PMFS_BLOCK_TYPE_MAX] = {0x1000, 0x200000, 0x40000000};
 static int pmfs_new_data_block(struct super_block *sb, struct pmfs_inode *pi,
 		unsigned long *blocknr, int zero)
 {
-	unsigned int data_bits = blk_type_to_shift[pi->i_blk_type];
+	unsigned int data_bits;
+	u8 i_blk_type;
+	timing_t t;
+	
+	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
+	i_blk_type = pi->i_blk_type;
+	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
+	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
 
-	int errval = pmfs_new_block(sb, blocknr, pi->i_blk_type, zero);
+	data_bits = blk_type_to_shift[i_blk_type];
+
+	int errval = pmfs_new_block(sb, blocknr, i_blk_type, zero);
 
 	if (!errval) {
 		pmfs_memunlock_inode(sb, pi);
+		PMFS_START_TIMING(write_pi_i_blocks_t, t);
 		le64_add_cpu(&pi->i_blocks,
 			(1 << (data_bits - sb->s_blocksize_bits)));
+		PMFS_END_TIMING(write_pi_i_blocks_t, t);
+		trace_nvm_access(NVM_WRITE, "Write Inode IBlocks", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blocks), sizeof(__le64));
 		pmfs_memlock_inode(sb, pi);
 	}
 
@@ -523,6 +535,7 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 	__le64 *root, prev_root = pi->root;
 	unsigned long blocknr;
 	int errval = 0;
+	timing_t t;
 
 	pmfs_dbg_verbose("increasing tree height %x:%x\n", height, new_height);
 	while (height < new_height) {
@@ -542,8 +555,18 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 		height++;
 	}
 	pmfs_memunlock_inode(sb, pi);
+
+	PMFS_START_TIMING(write_pi_root_t, t);
 	pi->root = prev_root;
+	PMFS_END_TIMING(write_pi_root_t, t);
+	
+	PMFS_START_TIMING(write_pi_height_t, t);
 	pi->height = height;
+	PMFS_END_TIMING(write_pi_height_t, t);
+
+	trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
+	trace_nvm_access(NVM_WRITE, "Write Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
+	
 	pmfs_memlock_inode(sb, pi);
 	return errval;
 }
@@ -569,6 +592,14 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 	unsigned long blocknr, first_blk, last_blk;
 	unsigned int first_index, last_index;
 	unsigned int flush_bytes;
+	u8 i_blk_type;
+	u64 is_valid;
+	timing_t t;
+
+	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
+	i_blk_type = pi->i_blk_type;
+	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
+	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
 
 	node = pmfs_get_block(sb, le64_to_cpu(block));
 
@@ -578,8 +609,13 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 	last_index = last_blocknr >> node_bits;
 
 	for (i = first_index; i <= last_index; i++) {
+		PMFS_START_TIMING(read_metablock_t, t);
+		is_valid = node[i];
+		PMFS_END_TIMING(read_metablock_t, t);
+		trace_nvm_access(NVM_READ, "Read Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
+
 		if (height == 1) {
-			if (node[i] == 0) {
+			if (is_valid == 0) {
 				errval = pmfs_new_data_block(sb, pi, &blocknr,
 							zero);
 				if (errval) {
@@ -601,12 +637,15 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 					journal_saved = 1;
 				}
 				pmfs_memunlock_block(sb, node);
+				PMFS_START_TIMING(write_metablock_t, t);
 				node[i] = cpu_to_le64(pmfs_get_block_off(sb,
-						blocknr, pi->i_blk_type));
+						blocknr, i_blk_type));
+				PMFS_END_TIMING(write_metablock_t, t);
+				trace_nvm_access(NVM_WRITE, "Write Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
 				pmfs_memlock_block(sb, node);
 			}
 		} else {
-			if (node[i] == 0) {
+			if (is_valid == 0) {
 				/* allocate the meta block */
 				errval = pmfs_new_block(sb, &blocknr,
 						PMFS_BLOCK_TYPE_4K, 1);
@@ -624,8 +663,11 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 					journal_saved = 1;
 				}
 				pmfs_memunlock_block(sb, node);
+				PMFS_START_TIMING(write_metablock_t, t);
 				node[i] = cpu_to_le64(pmfs_get_block_off(sb,
 					    blocknr, PMFS_BLOCK_TYPE_4K));
+				PMFS_END_TIMING(write_metablock_t, t);
+				trace_nvm_access(NVM_WRITE, "Write Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
 				pmfs_memlock_block(sb, node);
 				new_node = 1;
 			}
@@ -660,11 +702,20 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 	int errval;
 	unsigned long max_blocks;
 	unsigned int height;
-	unsigned int data_bits = blk_type_to_shift[pi->i_blk_type];
 	unsigned int blk_shift, meta_bits = META_BLK_SHIFT;
 	unsigned long blocknr, first_blocknr, last_blocknr, total_blocks;
+	unsigned int data_bits;
 	timing_t alloc_time;
+	timing_t t;
+	u8 i_blk_type;
+	
+	PMFS_START_TIMING(read_pi_height_t, t);
+	/* Hit Cache if lucky */
+	i_blk_type = pi->i_blk_type;				
+	PMFS_END_TIMING(read_pi_height_t, t);
+	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
 
+	data_bits = blk_type_to_shift[i_blk_type];
 	/* convert the 4K blocks into the actual blocks the inode is using */
 	blk_shift = data_bits - sb->s_blocksize_bits;
 
@@ -675,8 +726,11 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 	pmfs_dbg_verbose("alloc_blocks height %d file_blocknr %lx num %x, "
 		   "first blocknr 0x%lx, last_blocknr 0x%lx\n",
 		   pi->height, file_blocknr, num, first_blocknr, last_blocknr);
-
+	
+	PMFS_START_TIMING(read_pi_height_t, t);
 	height = pi->height;
+	PMFS_END_TIMING(read_pi_height_t, t);
+	trace_nvm_access(NVM_WRITE, "Read Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
 
 	blk_shift = height * meta_bits;
 
@@ -707,10 +761,20 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 				goto fail;
 			}
 			root = cpu_to_le64(pmfs_get_block_off(sb, blocknr,
-					   pi->i_blk_type));
+					   i_blk_type));
 			pmfs_memunlock_inode(sb, pi);
+			
+			PMFS_START_TIMING(write_pi_root_t, t);
 			pi->root = root;
+			PMFS_END_TIMING(write_pi_root_t, t);
+			
+			PMFS_START_TIMING(write_pi_height_t, t);
 			pi->height = height;
+			PMFS_END_TIMING(write_pi_height_t, t);
+
+			trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
+			trace_nvm_access(NVM_WRITE, "Write Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
+
 			pmfs_memlock_inode(sb, pi);
 		} else {
 			errval = pmfs_increase_btree_height(sb, pi, height);
@@ -759,9 +823,15 @@ inline int pmfs_alloc_blocks(pmfs_transaction_t *trans, struct inode *inode,
 	struct super_block *sb = inode->i_sb;
 	struct pmfs_inode *pi = pmfs_get_inode(sb, inode->i_ino);
 	int errval;
-
+	timing_t t;
+	
 	errval = __pmfs_alloc_blocks(trans, sb, pi, file_blocknr, num, zero);
+
+	PMFS_START_TIMING(read_pi_i_blocks_t, t);
 	inode->i_blocks = le64_to_cpu(pi->i_blocks);
+	PMFS_END_TIMING(read_pi_i_blocks_t, t);
+
+	trace_nvm_access(NVM_READ, "Read Inode's i_blocks", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blocks), sizeof(__le64));
 
 	return errval;
 }
@@ -1215,16 +1285,25 @@ inline void pmfs_update_nlink(struct inode *inode, struct pmfs_inode *pi)
 
 inline void pmfs_update_isize(struct inode *inode, struct pmfs_inode *pi)
 {
+	timing_t t;
+	
 	pmfs_memunlock_inode(inode->i_sb, pi);
+	PMFS_START_TIMING(write_pi_size_t, t);
 	pi->i_size = cpu_to_le64(inode->i_size);
+	PMFS_START_TIMING(write_pi_size_t, t);
+	trace_nvm_access(NVM_WRITE, "Write Inode's Size", PMFS_SB(inode->i_sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_size), sizeof(u64));
 	pmfs_memlock_inode(inode->i_sb, pi);
 }
 
 inline void pmfs_update_time(struct inode *inode, struct pmfs_inode *pi)
 {
+	timing_t t;
 	pmfs_memunlock_inode(inode->i_sb, pi);
+	PMFS_START_TIMING(write_pi_time_t, t);
 	pi->i_ctime = cpu_to_le32(inode->i_ctime.tv_sec);
 	pi->i_mtime = cpu_to_le32(inode->i_mtime.tv_sec);
+	PMFS_END_TIMING(write_pi_time_t, t);
+	trace_nvm_access(NVM_WRITE, "Write Inode's Time", PMFS_SB(inode->i_sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_ctime), sizeof(__le32) + sizeof(__le32));
 	pmfs_memlock_inode(inode->i_sb, pi);
 }
 
