@@ -1,13 +1,13 @@
 #!/bin/sh
 
 if [ ! "$1" ]; then
-    dev=/dev/pmem1
+    dev=/dev/pmem0
 else
     dev=$1
 fi
 
 if [ ! "$2" ]; then
-    mnt=/mnt/pmem1
+    mnt=/mnt/pmem0
 else
     mnt=$2
 fi
