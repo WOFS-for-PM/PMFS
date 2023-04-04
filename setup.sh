@@ -18,9 +18,15 @@ else
     make "$3"
 fi
 
+if [ ! "$4" ]; then
+    measure_timing=0
+else 
+    measure_timing=$4
+fi
+
 sudo umount "$mnt"
 sudo rmmod pmfs
-sudo insmod pmfs.ko measure_timing=1
+sudo insmod pmfs.ko measure_timing="$measure_timing"
 
 sleep 1
 
