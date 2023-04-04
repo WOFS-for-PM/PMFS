@@ -95,7 +95,7 @@ do_xip_mapping_read(struct address_space *mapping,
 		else
 			left = __clear_user(buf + copied, nr);
 		PMFS_END_TIMING(memcpy_r_t, memcpy_time);
-
+		PMFS_STATS_ADD(data_read, nr);
 		if (left) {
 			error = -EFAULT;
 			goto out;
@@ -207,6 +207,7 @@ __pmfs_xip_file_write(struct address_space *mapping, const char __user *buf,
 		pmfs_xip_mem_protect(sb, xmem + offset, bytes, 0);
 		PMFS_END_TIMING(memcpy_w_t, memcpy_time);
 		PMFS_TIMING_ALIAS(write_data_t, memcpy_w_t);
+		PMFS_STATS_ADD(data_write, copied);
 		trace_nvm_access(NVM_WRITE, "Write Data", PMFS_SB(sb)->virt_addr, xmem + offset, copied);
 
 		/* if start or end dest address is not 8 byte aligned, 
@@ -262,12 +263,13 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 	pmfs_xip_mem_protect(sb, xmem + offset, count, 1);
 	copied = memcpy_to_nvmm((char *)xmem, offset, buf, count);
 	pmfs_xip_mem_protect(sb, xmem + offset, count, 0);
+	pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
 	PMFS_END_TIMING(memcpy_w_t, memcpy_time);
+	PMFS_STATS_ADD(data_write, copied);
+
 	PMFS_TIMING_ALIAS(write_data_t, memcpy_w_t);
 	trace_nvm_access(NVM_WRITE, "Write Data", PMFS_SB(sb)->virt_addr, xmem + offset, copied);
 
-
-	pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
 
 	if (likely(copied > 0)) {
 		pos += copied;
@@ -283,9 +285,14 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 		PERSISTENT_MARK();
 		i_size_write(inode, pos);
 		PERSISTENT_BARRIER();
+		PMFS_START_TIMING(write_pi_time_and_size_t, t);
 		pmfs_memunlock_inode(sb, pi);
 		pmfs_update_time_and_size(inode, pi);
 		pmfs_memlock_inode(sb, pi);
+		pmfs_flush_buffer(pi, 1, false);
+		PMFS_END_TIMING(write_pi_time_and_size_t, t);
+		PMFS_STATS_ADD(meta_write, 8);
+
 	} else {
 		u64 c_m_time;
 		/* update c_time and m_time atomically. We don't need to make the data
@@ -293,14 +300,14 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 		 * fsync will do that. */
 		c_m_time = (inode->i_ctime.tv_sec & 0xFFFFFFFF);
 		c_m_time = c_m_time | (c_m_time << 32);
+		PMFS_START_TIMING(write_pi_time_and_size_t, t);
 		pmfs_memunlock_inode(sb, pi);
 		pmfs_memcpy_atomic(&pi->i_ctime, &c_m_time, 8);
 		pmfs_memlock_inode(sb, pi);
+		pmfs_flush_buffer(pi, 1, false);
+		PMFS_END_TIMING(write_pi_time_and_size_t, t);
+		PMFS_STATS_ADD(meta_write, 8);
 	}
-	
-	PMFS_START_TIMING(write_pi_time_and_size_t, t);
-	pmfs_flush_buffer(pi, 1, false);
-	PMFS_END_TIMING(write_pi_time_and_size_t, t);
 	trace_nvm_access(NVM_WRITE, "Update and Flush Inode's Attr", PMFS_SB(inode->i_sb)->virt_addr, (char *)pi, CACHELINE_SIZE);
 	
 	return ret;
@@ -373,11 +380,13 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 		goto out;
 	}
 
-	pi = pmfs_get_inode(sb, inode->i_ino);
+	pi = pmfs_get_inode(sb, inode->i_ino);  
 	
 	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
-	i_blk_type = pi->i_blk_type;
+	i_blk_type = pi->i_blk_type;			
 	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
+	PMFS_STATS_ADD(meta_read, 1);
+
 	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
 	
 	offset = pos & (sb->s_blocksize - 1);
@@ -386,8 +395,8 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	offset = pos & (blk_type_to_size[i_blk_type] - 1);
 	start_blk = pos >> sb->s_blocksize_bits;
 	end_blk = start_blk + num_blocks - 1;
-
-	block = pmfs_find_data_block(inode, start_blk);
+	
+	block = pmfs_find_data_block(inode, start_blk);  
 
 	/* Referring to the inode's block size, not 4K */
 	same_block = (((count + offset - 1) >>
@@ -416,7 +425,7 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 		goto out;
 	}
 	inode->i_ctime = inode->i_mtime = current_time(inode);
-	pmfs_update_time(inode, pi);
+	pmfs_update_time(inode, pi);		//write_pi_time_t
 
 	/* We avoid zeroing the alloc'd range, which is going to be overwritten
 	 * by this system call anyway */
@@ -595,6 +604,7 @@ static inline int __pmfs_get_block(struct inode *inode, pgoff_t pgoff,
 	return rc;
 }
 
+// finish
 int pmfs_get_xip_mem(struct address_space *mapping, pgoff_t pgoff, int create,
 		      void **kmem, unsigned long *pfn)
 {
@@ -633,6 +643,8 @@ int pmfs_xip_file_mmap(struct file *file, struct vm_area_struct *vma)
 	vma->vm_flags |= VM_MIXEDMAP;
 
 	vma->vm_ops = &pmfs_xip_vm_ops;
+
+	
 	pmfs_dbg_mmap4k("[%s:%d] MMAP 4KPAGE vm_start(0x%lx),"
 			" vm_end(0x%lx), vm_flags(0x%lx), "
 			"vm_page_prot(0x%lx)\n", __func__,

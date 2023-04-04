@@ -43,6 +43,7 @@ static int pmfs_new_data_block(struct super_block *sb, struct pmfs_inode *pi,
 	i_blk_type = pi->i_blk_type;
 	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
 	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
+	PMFS_STATS_ADD(meta_read, 1);
 
 	data_bits = blk_type_to_shift[i_blk_type];
 
@@ -55,6 +56,7 @@ static int pmfs_new_data_block(struct super_block *sb, struct pmfs_inode *pi,
 			(1 << (data_bits - sb->s_blocksize_bits)));
 		PMFS_END_TIMING(write_pi_i_blocks_t, t);
 		trace_nvm_access(NVM_WRITE, "Write Inode IBlocks", PMFS_SB(sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_blocks), sizeof(__le64));
+		PMFS_STATS_ADD(meta_write, 8);
 		pmfs_memlock_inode(sb, pi);
 	}
 
@@ -65,6 +67,7 @@ static int pmfs_new_data_block(struct super_block *sb, struct pmfs_inode *pi,
  * find the offset to the block represented by the given inode's file
  * relative block number.
  */
+// finish
 u64 pmfs_find_data_block(struct inode *inode, unsigned long file_blocknr)
 {
 	struct super_block *sb = inode->i_sb;
@@ -535,7 +538,7 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 	__le64 *root, prev_root = pi->root;
 	unsigned long blocknr;
 	int errval = 0;
-	timing_t t;
+	timing_t t, t2;
 
 	pmfs_dbg_verbose("increasing tree height %x:%x\n", height, new_height);
 	while (height < new_height) {
@@ -547,10 +550,14 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 		}
 		blocknr = pmfs_get_block_off(sb, blocknr, PMFS_BLOCK_TYPE_4K);
 		root = pmfs_get_block(sb, blocknr);
+		PMFS_START_TIMING(write_metablock_t, t2);
 		pmfs_memunlock_block(sb, root);
 		root[0] = prev_root;
 		pmfs_memlock_block(sb, root);
 		pmfs_flush_buffer(root, sizeof(*root), false);
+		PMFS_END_TIMING(write_metablock_t, t2);
+		PMFS_STATS_ADD(meta_write, 8);
+
 		prev_root = cpu_to_le64(blocknr);
 		height++;
 	}
@@ -564,6 +571,7 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 	pi->height = height;
 	PMFS_END_TIMING(write_pi_height_t, t);
 
+	PMFS_STATS_ADD(meta_write, 9);
 	trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
 	trace_nvm_access(NVM_WRITE, "Write Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
 	
@@ -594,11 +602,12 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 	unsigned int flush_bytes;
 	u8 i_blk_type;
 	u64 is_valid;
-	timing_t t;
+	timing_t t, t2;
 
 	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
 	i_blk_type = pi->i_blk_type;
 	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
+	PMFS_STATS_ADD(meta_read, 1);
 	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
 
 	node = pmfs_get_block(sb, le64_to_cpu(block));
@@ -612,6 +621,7 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 		PMFS_START_TIMING(read_metablock_t, t);
 		is_valid = node[i];
 		PMFS_END_TIMING(read_metablock_t, t);
+		PMFS_STATS_ADD(meta_read, 8);
 		trace_nvm_access(NVM_READ, "Read Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
 
 		if (height == 1) {
@@ -641,6 +651,7 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 				node[i] = cpu_to_le64(pmfs_get_block_off(sb,
 						blocknr, i_blk_type));
 				PMFS_END_TIMING(write_metablock_t, t);
+				PMFS_STATS_ADD(meta_write, 8);
 				trace_nvm_access(NVM_WRITE, "Write Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
 				pmfs_memlock_block(sb, node);
 			}
@@ -667,6 +678,7 @@ static int recursive_alloc_blocks(pmfs_transaction_t *trans,
 				node[i] = cpu_to_le64(pmfs_get_block_off(sb,
 					    blocknr, PMFS_BLOCK_TYPE_4K));
 				PMFS_END_TIMING(write_metablock_t, t);
+				PMFS_STATS_ADD(meta_write, 8);
 				trace_nvm_access(NVM_WRITE, "Write Meta Entry", PMFS_SB(sb)->virt_addr, (char *)node + i * sizeof(__le64), sizeof(__le64));
 				pmfs_memlock_block(sb, node);
 				new_node = 1;
@@ -714,6 +726,7 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 	i_blk_type = pi->i_blk_type;				
 	PMFS_END_TIMING(read_pi_height_t, t);
 	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
+	PMFS_STATS_ADD(meta_read, 1);
 
 	data_bits = blk_type_to_shift[i_blk_type];
 	/* convert the 4K blocks into the actual blocks the inode is using */
@@ -730,6 +743,7 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 	PMFS_START_TIMING(read_pi_height_t, t);
 	height = pi->height;
 	PMFS_END_TIMING(read_pi_height_t, t);
+	PMFS_STATS_ADD(meta_read, 1);
 	trace_nvm_access(NVM_WRITE, "Read Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
 
 	blk_shift = height * meta_bits;
@@ -772,6 +786,7 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 			pi->height = height;
 			PMFS_END_TIMING(write_pi_height_t, t);
 
+			PMFS_STATS_ADD(meta_write, 9);
 			trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
 			trace_nvm_access(NVM_WRITE, "Write Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
 
@@ -817,6 +832,7 @@ fail:
  * Allocate num data blocks for inode, starting at given file-relative
  * block number.
  */
+// finish
 inline int pmfs_alloc_blocks(pmfs_transaction_t *trans, struct inode *inode,
 		unsigned long file_blocknr, unsigned int num, bool zero)
 {
@@ -830,6 +846,7 @@ inline int pmfs_alloc_blocks(pmfs_transaction_t *trans, struct inode *inode,
 	PMFS_START_TIMING(read_pi_i_blocks_t, t);
 	inode->i_blocks = le64_to_cpu(pi->i_blocks);
 	PMFS_END_TIMING(read_pi_i_blocks_t, t);
+	PMFS_STATS_ADD(meta_read, 8);
 
 	trace_nvm_access(NVM_READ, "Read Inode's i_blocks", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blocks), sizeof(__le64));
 
@@ -895,10 +912,11 @@ int pmfs_init_inode_table(struct super_block *sb)
 	return 0;
 }
 
+// finish
 static int pmfs_read_inode(struct inode *inode, struct pmfs_inode *pi)
 {
 	int ret = -EIO;
-
+	timing_t t;
 #if 0
 	if (pmfs_calc_checksum((u8 *)pi, PMFS_INODE_SIZE)) {
 		pmfs_err(inode->i_sb, "checksum error in inode %lx\n",
@@ -906,7 +924,7 @@ static int pmfs_read_inode(struct inode *inode, struct pmfs_inode *pi)
 		goto bad_inode;
 	}
 #endif
-
+	PMFS_START_TIMING(read_pi_t, t);
 	inode->i_mode = le16_to_cpu(pi->i_mode);
 	i_uid_write(inode, le32_to_cpu(pi->i_uid));
 	i_gid_write(inode, le32_to_cpu(pi->i_gid));
@@ -918,17 +936,20 @@ static int pmfs_read_inode(struct inode *inode, struct pmfs_inode *pi)
 	inode->i_atime.tv_nsec = inode->i_mtime.tv_nsec =
 					 inode->i_ctime.tv_nsec = 0;
 	inode->i_generation = le32_to_cpu(pi->i_generation);
+	PMFS_END_TIMING(read_pi_t, t);
+	PMFS_STATS_ADD(meta_read, 36);
 	pmfs_set_inode_flags(inode, pi);
 
 	/* check if the inode is active. */
 	if (inode->i_nlink == 0 &&
-	   (inode->i_mode == 0 || le32_to_cpu(pi->i_dtime))) {
+	   (inode->i_mode == 0 || le32_to_cpu(pi->i_dtime))) {		// cached
 		/* this inode is deleted */
 		ret = -ESTALE;
 		goto bad_inode;
 	}
 
-	inode->i_blocks = le64_to_cpu(pi->i_blocks);
+	inode->i_blocks = le64_to_cpu(pi->i_blocks);				// cached
+	PMFS_STATS_ADD(meta_read, 8);
 	inode->i_mapping->a_ops = &pmfs_aops_xip;
 
 	switch (inode->i_mode & S_IFMT) {
@@ -947,7 +968,7 @@ static int pmfs_read_inode(struct inode *inode, struct pmfs_inode *pi)
 		inode->i_size = 0;
 		inode->i_op = &pmfs_special_inode_operations;
 		init_special_inode(inode, inode->i_mode,
-				   le32_to_cpu(pi->dev.rdev));
+				   le32_to_cpu(pi->dev.rdev));					// cached
 		break;
 	}
 
@@ -1044,6 +1065,7 @@ out:
 	return err;
 }
 
+// finish
 struct inode *pmfs_iget(struct super_block *sb, unsigned long ino)
 {
 	struct inode *inode;
@@ -1167,6 +1189,7 @@ static int pmfs_increase_inode_table_size(struct super_block *sb)
 	return errval;
 }
 
+// finish
 struct inode *pmfs_new_inode(pmfs_transaction_t *trans, struct inode *dir,
 		umode_t mode, const struct qstr *qstr)
 {
@@ -1177,8 +1200,10 @@ struct inode *pmfs_new_inode(pmfs_transaction_t *trans, struct inode *dir,
 	struct pmfs_inode *diri = NULL;
 	int i, errval;
 	u32 num_inodes, inodes_per_block;
+	u64 temp_link_count, temp_mode, temp_time;
 	ino_t ino = 0;
-
+	timing_t flag_t, free_t, write_t;
+	
 	sb = dir->i_sb;
 	sbi = (struct pmfs_sb_info *)sb->s_fs_info;
 	inode = new_inode(sb);
@@ -1213,16 +1238,25 @@ retry:
 		end_ino = i + (inodes_per_block - (i & (inodes_per_block - 1)));
 		ino = i <<  PMFS_INODE_BITS;
 		pi = pmfs_get_inode(sb, ino);
+
 		for (; i < end_ino; i++) {
 			/* check if the inode is active. */
+			PMFS_START_TIMING(check_pi_free_t, free_t);
+			PMFS_STATS_ADD(meta_read, 8);
+
 			if (le16_to_cpu(pi->i_links_count) == 0 &&
 			(le16_to_cpu(pi->i_mode) == 0 ||
-			 le32_to_cpu(pi->i_dtime)))
+			 le32_to_cpu(pi->i_dtime))) {
 				/* this inode is free */
+				PMFS_END_TIMING(check_pi_free_t, free_t);
 				break;
+			}
+
 			pi = (struct pmfs_inode *)((void *)pi +
 							PMFS_INODE_SIZE);
+			PMFS_END_TIMING(check_pi_free_t, free_t);
 		}
+		
 		/* found a free inode */
 		if (i < end_ino)
 			break;
@@ -1243,12 +1277,14 @@ retry:
 	inode->i_ino = ino;
 	pmfs_add_logentry(sb, trans, pi, sizeof(*pi), LE_DATA);
 
+	PMFS_START_TIMING(write_pi_t, write_t);
 	pmfs_memunlock_inode(sb, pi);
 	pi->i_blk_type = PMFS_DEFAULT_BLOCK_TYPE;
 	pi->i_flags = pmfs_mask_flags(mode, diri->i_flags);
 	pi->height = 0;
 	pi->i_dtime = 0;
 	pmfs_memlock_inode(sb, pi);
+	PMFS_END_TIMING(write_pi_t, write_t);
 
 	sbi->s_free_inodes_count -= 1;
 
@@ -1259,7 +1295,10 @@ retry:
 
 	mutex_unlock(&sbi->inode_table_mutex);
 
+	PMFS_START_TIMING(write_pi_t, write_t);
 	pmfs_update_inode(inode, pi);
+	PMFS_START_TIMING(write_pi_t, write_t);
+	PMFS_STATS_ADD(meta_write, sizeof(struct pmfs_inode));
 
 	pmfs_set_inode_flags(inode, pi);
 
@@ -1276,13 +1315,19 @@ fail1:
 	return ERR_PTR(errval);
 }
 
+// finish
 inline void pmfs_update_nlink(struct inode *inode, struct pmfs_inode *pi)
 {
+	timing_t t;
+	PMFS_START_TIMING(write_pi_link_t, t);
 	pmfs_memunlock_inode(inode->i_sb, pi);
 	pi->i_links_count = cpu_to_le16(inode->i_nlink);
 	pmfs_memlock_inode(inode->i_sb, pi);
+	PMFS_END_TIMING(write_pi_link_t, t);
+	PMFS_STATS_ADD(meta_write, 2);
 }
 
+// finish
 inline void pmfs_update_isize(struct inode *inode, struct pmfs_inode *pi)
 {
 	timing_t t;
@@ -1291,6 +1336,7 @@ inline void pmfs_update_isize(struct inode *inode, struct pmfs_inode *pi)
 	PMFS_START_TIMING(write_pi_size_t, t);
 	pi->i_size = cpu_to_le64(inode->i_size);
 	PMFS_START_TIMING(write_pi_size_t, t);
+	PMFS_STATS_ADD(meta_write, 8);
 	trace_nvm_access(NVM_WRITE, "Write Inode's Size", PMFS_SB(inode->i_sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_size), sizeof(u64));
 	pmfs_memlock_inode(inode->i_sb, pi);
 }
@@ -1303,6 +1349,7 @@ inline void pmfs_update_time(struct inode *inode, struct pmfs_inode *pi)
 	pi->i_ctime = cpu_to_le32(inode->i_ctime.tv_sec);
 	pi->i_mtime = cpu_to_le32(inode->i_mtime.tv_sec);
 	PMFS_END_TIMING(write_pi_time_t, t);
+	PMFS_STATS_ADD(meta_write, 8);
 	trace_nvm_access(NVM_WRITE, "Write Inode's Time", PMFS_SB(inode->i_sb)->virt_addr, (char *) pi + offsetof(struct pmfs_inode, i_ctime), sizeof(__le32) + sizeof(__le32));
 	pmfs_memlock_inode(inode->i_sb, pi);
 }
@@ -1455,18 +1502,20 @@ out:
  * even before the transaction is complete. Because if a power failure happens
  * before freeing of all the blocks is complete, PMFS will free the remaining
  * blocks during the next mount when we recover the truncate list */
+// finish
 void pmfs_truncate_add(struct inode *inode, u64 truncate_size)
 {
 	struct super_block *sb = inode->i_sb;
 	struct pmfs_inode_truncate_item *head = pmfs_get_truncate_list_head(sb);
 	struct pmfs_inode_truncate_item *li;
-
+	timing_t t;
 	mutex_lock(&PMFS_SB(sb)->s_truncate_lock);
 	if (!list_empty(&PMFS_I(inode)->i_truncated))
 		goto out_unlock;
 
 	li = pmfs_get_truncate_item(sb, inode->i_ino);
 
+	PMFS_START_TIMING(add_truncate_item_t, t);
 	pmfs_memunlock_range(sb, li, sizeof(*li));
 	li->i_next_truncate = head->i_next_truncate;
 	li->i_truncatesize = cpu_to_le64(truncate_size);
@@ -1481,6 +1530,8 @@ void pmfs_truncate_add(struct inode *inode, u64 truncate_size)
 	pmfs_memlock_range(sb, head, sizeof(*head));
 	pmfs_flush_buffer(&head->i_next_truncate,
 		sizeof(head->i_next_truncate), false);
+	PMFS_START_TIMING(add_truncate_item_t, t);
+	PMFS_STATS_ADD(meta_write, sizeof(*li) + sizeof(head->i_next_truncate));
 	/* No need to make the head persistent here if we are called from
 	 * within a transaction, because the transaction will provide a
 	 * subsequent persistent barrier */
@@ -1567,6 +1618,7 @@ static int pmfs_update_single_field(struct super_block *sb, struct inode *inode,
 	return 0;
 }
 
+// not called
 int pmfs_notify_change(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
@@ -1631,9 +1683,17 @@ int pmfs_notify_change(struct dentry *dentry, struct iattr *attr)
 	return ret;
 }
 
+// finish
 void pmfs_set_inode_flags(struct inode *inode, struct pmfs_inode *pi)
 {
 	unsigned int flags = le32_to_cpu(pi->i_flags);
+	unsigned int attr;
+	timing_t t;
+	
+	PMFS_START_TIMING(read_pi_attr_t, t);
+	attr = pi->i_xattr;
+	PMFS_END_TIMING(read_pi_attr_t, t);
+	PMFS_STATS_ADD(meta_read, 8);
 
 	inode->i_flags &=
 		~(S_SYNC | S_APPEND | S_IMMUTABLE | S_NOATIME | S_DIRSYNC);
@@ -1650,6 +1710,7 @@ void pmfs_set_inode_flags(struct inode *inode, struct pmfs_inode *pi)
 	if (!pi->i_xattr)
 		inode_has_no_xattr(inode);
 	inode->i_flags |= S_DAX;
+	
 }
 
 void pmfs_get_inode_flags(struct inode *inode, struct pmfs_inode *pi)

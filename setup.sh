@@ -1,19 +1,19 @@
 #!/bin/sh
 
 if [ ! "$1" ]; then
-    dev=/dev/pmem1
+    dev=/dev/pmem0
 else
     dev=$1
 fi
 
 if [ ! "$2" ]; then
-    mnt=/mnt/pmem1
+    mnt=/mnt/pmem0
 else
     mnt=$2
 fi
 
 if [ ! "$3" ]; then
-    make
+    make -j32
 else 
     make "$3"
 fi
@@ -22,7 +22,7 @@ sudo umount "$mnt"
 sudo rmmod pmfs
 sudo insmod pmfs.ko measure_timing=1
 
-# sleep 1
+sleep 1
 
 sudo mount -t pmfs -o init "$dev" "$mnt"
 

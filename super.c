@@ -49,7 +49,7 @@ static struct kmem_cache *pmfs_inode_cachep;
 static struct kmem_cache *pmfs_blocknode_cachep;
 static struct kmem_cache *pmfs_transaction_cachep;
 /* FIXME: should the following variable be one per PMFS instance? */
-unsigned int pmfs_dbgmask = 0;
+unsigned int pmfs_dbgmask = PMFS_DBGMASK_TRACE;
 
 #ifdef CONFIG_PMFS_TEST
 static void *first_pmfs_super;
@@ -871,8 +871,6 @@ static void pmfs_put_super(struct super_block *sb)
 		first_pmfs_super = NULL;
 #endif
 	
-	pmfs_print_timing_stats();
-
 	/* It's unmount time, so unmap the pmfs memory */
 	if (sbi->virt_addr) {
 		pmfs_save_blocknode_mappings(sb);
@@ -886,6 +884,7 @@ static void pmfs_put_super(struct super_block *sb)
 		list_del(&i->link);
 		pmfs_free_blocknode(sb, i);
 	}
+	pmfs_print_timing_stats();
 	sb->s_fs_info = NULL;
 	pmfs_dbgmask = 0;
 	kfree(sbi);

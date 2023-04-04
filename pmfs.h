@@ -59,6 +59,7 @@ extern unsigned int pmfs_dbgmask;
 #define PMFS_DBGMASK_MMAPVVERBOSE      (0x00000008)
 #define PMFS_DBGMASK_VERBOSE           (0x00000010)
 #define PMFS_DBGMASK_TRANSACTION       (0x00000020)
+#define PMFS_DBGMASK_TRACE		       (0x00000040)
 
 #define pmfs_dbg_mmaphuge(s, args ...)		 \
 	((pmfs_dbgmask & PMFS_DBGMASK_MMAPHUGE) ? pmfs_dbg(s, args) : 0)
@@ -73,6 +74,8 @@ extern unsigned int pmfs_dbgmask;
 	((pmfs_dbgmask & PMFS_DBGMASK_VERBOSE) ? pmfs_dbg(s, ##args) : 0)
 #define pmfs_dbg_trans(s, args ...)		 \
 	((pmfs_dbgmask & PMFS_DBGMASK_TRANSACTION) ? pmfs_dbg(s, ##args) : 0)
+#define pmfs_dbg_trace(s, args ...)		 \
+	((pmfs_dbgmask & PMFS_DBGMASK_TRACE) ? pmfs_dbg(s, ##args) : 0)
 
 #define pmfs_set_bit                   __test_and_set_bit_le
 #define pmfs_clear_bit                 __test_and_clear_bit_le
@@ -110,6 +113,7 @@ extern unsigned int blk_type_to_size[PMFS_BLOCK_TYPE_MAX];
 /* ======================= Timing ========================= */
 enum timing_category {
 	create_t,
+	lookup_t,
 	unlink_t,
 	readdir_t,
 	xip_read_t,
@@ -118,42 +122,72 @@ enum timing_category {
 	internal_write_t,
 	memcpy_r_t,
 	memcpy_w_t,
-	alloc_blocks_t,
-	new_trans_t,
-	add_log_t,
-	commit_trans_t,
+	alloc_blocks_t,			
+	new_trans_t,			// n
+	add_log_t,				// n: write_log_entry_t
+	commit_trans_t,			// n
 	mmap_fault_t,
 	fsync_t,
 	free_tree_t,
 	evict_inode_t,
 	recovery_t,
 	find_data_block_t,
-	read_metablock_t,
-	write_metablock_t,
-	read_pi_i_blk_type_t,
-	read_pi_height_t,
-	read_pi_i_blocks_t,
-	write_pi_time_and_size_t,
-	write_pi_time_t,
-	write_pi_size_t,
-	write_pi_root_t,
-	write_pi_height_t,
-	write_pi_i_blocks_t,
+	read_metablock_t,		// y
+	write_metablock_t,		// y
+	read_pi_i_blk_type_t,	// y
+	read_pi_height_t,		// y
+	read_pi_i_blocks_t,		// y
+	read_pi_i_flag_t,		// y
+	read_pi_attr_t,			// y
+	read_pi_t,				// y
+	check_pi_free_t,		 	// y
+	write_pi_time_and_size_t,	// y
+	write_pi_time_t,			// y
+	write_pi_size_t,			// y
+	write_pi_root_t,			// y
+	write_pi_height_t,			// y
+	write_pi_i_blocks_t,		// y
+	write_pi_link_t,			// y
+	write_pi_t,					// y
 	pmfs_clean_journal_t,
-	write_trans_tail_t,
-	read_trans_tail_t,
-	read_trans_head_t,
-	read_trans_base_t,
-	read_trans_genid_t,
-	write_log_entry_t,
-	write_data_t,
+	write_trans_tail_t,			// y
+	read_trans_tail_t,			// y
+	read_trans_head_t,			// y
+	read_trans_base_t,			// y
+	read_trans_genid_t,			// y
+	read_trans_type_t,			// y
+	write_trans_genid_t,		// y
+	write_log_entry_t,			// y
+	read_journal_head_t,		// y
+	write_journal_head_t,		// y
+	read_journal_tail_t,		// y
+	read_genid,					// y
+	read_de_t,					// y
+	write_de_t,					// y
+	add_truncate_item_t,		// y
+	write_data_t,		
 	prefetch_t,
+	zero_t,
 	TIMING_NUM,
 };
+
+enum stats_category {
+	meta_read,
+	meta_write,
+	data_read,
+	data_write,
+	zero,
+	STATS_NUM
+};
+
+#define PMFS_STATS_ADD(name, value) \
+	{__this_cpu_add(IOstats_percpu[name], value); }
 
 extern const char *Timingstring[TIMING_NUM];
 extern unsigned long long Timingstats[TIMING_NUM];
 extern u64 Countstats[TIMING_NUM];
+extern u64 IOstats[STATS_NUM];
+DECLARE_PER_CPU(u64[STATS_NUM], IOstats_percpu);
 
 extern int measure_timing;
 extern int support_clwb;
@@ -392,6 +426,7 @@ static inline pmfs_journal_t *pmfs_get_journal(struct super_block *sb)
 			le64_to_cpu(ps->s_journal_offset));
 }
 
+// ignore
 static inline struct pmfs_inode *pmfs_get_inode_table(struct super_block *sb)
 {
 	struct pmfs_super_block *ps = pmfs_get_super(sb);
@@ -510,11 +545,18 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 	u64 bp = 0;
 	u32 height, bit_shift;
 	unsigned int idx;
-	timing_t t, access_time;
+	timing_t t, access_time, height_t, root_t;
 
 	PMFS_START_TIMING(find_data_block_t, t);
+	PMFS_START_TIMING(read_pi_height_t, height_t);
 	height = pi->height;
+	PMFS_END_TIMING(read_pi_height_t, height_t);
+
+	PMFS_START_TIMING(read_pi_height_t, root_t);
 	bp = le64_to_cpu(pi->root);
+	PMFS_END_TIMING(read_pi_height_t, root_t);
+
+	PMFS_STATS_ADD(meta_read, 9);
 
 	while (height > 0) {
 		level_ptr = pmfs_get_block(sb, bp);
@@ -524,7 +566,7 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 		PMFS_START_TIMING(read_metablock_t, access_time);
 		bp = le64_to_cpu(level_ptr[idx]);
 		PMFS_END_TIMING(read_metablock_t, access_time);
-		
+		PMFS_STATS_ADD(meta_read, 8);
 		trace_nvm_access(NVM_READ, "Access Meta Block", PMFS_SB(sb)->virt_addr, level_ptr + idx, sizeof(u64));
 
 		if (bp == 0)
@@ -546,6 +588,7 @@ static inline uint32_t pmfs_inode_blk_size (struct pmfs_inode *pi)
 	return blk_type_to_size[pi->i_blk_type];
 }
 
+// finish
 /* If this is part of a read-modify-write of the inode metadata,
  * pmfs_memunlock_inode() before calling! */
 static inline struct pmfs_inode *pmfs_get_inode(struct super_block *sb,
@@ -674,6 +717,7 @@ int pmfs_check_dir_entry(const char *function, struct inode *dir,
 			  struct pmfs_direntry *de, u8 *base,
 			  unsigned long offset);
 
+// no
 static inline int pmfs_match(int len, const char *const name,
 			      struct pmfs_direntry *de)
 {

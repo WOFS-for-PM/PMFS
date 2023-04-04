@@ -24,6 +24,7 @@
 #define DT2IF(dt) (((dt) << 12) & S_IFMT)
 #define IF2DT(sif) (((sif) & S_IFMT) >> 12)
 
+// finish
 static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	struct dentry *dentry, struct inode *inode,
 	struct pmfs_direntry *de, u8 *blk_base,  struct pmfs_inode *pidir)
@@ -32,14 +33,17 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	const char *name = dentry->d_name.name;
 	int namelen = dentry->d_name.len;
 	unsigned short reclen;
+	unsigned long ino;
 	int nlen, rlen;
 	char *top;
-
+	timing_t t;
 	reclen = PMFS_DIR_REC_LEN(namelen);
 	if (!de) {
+
 		de = (struct pmfs_direntry *)blk_base;
 		top = blk_base + dir->i_sb->s_blocksize - reclen;
 		while ((char *)de <= top) {
+			PMFS_START_TIMING(read_de_t, t);
 #if 0
 			if (!pmfs_check_dir_entry("pmfs_add_dirent_to_buf",
 			    dir, de, blk_base, offset))
@@ -48,34 +52,51 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 				return -EEXIST;
 #endif
 			rlen = le16_to_cpu(de->de_len);
+			PMFS_STATS_ADD(meta_read, 2);
 			if (de->ino) {
 				nlen = PMFS_DIR_REC_LEN(de->name_len);
-				if ((rlen - nlen) >= reclen)
+				PMFS_STATS_ADD(meta_read, 9);
+				if ((rlen - nlen) >= reclen) {
+					PMFS_END_TIMING(read_de_t, t);
 					break;
-			} else if (rlen >= reclen)
+				}
+			} else if (rlen >= reclen) {
+				PMFS_END_TIMING(read_de_t, t);
 				break;
+			}
 			de = (struct pmfs_direntry *)((char *)de + rlen);
+			PMFS_END_TIMING(read_de_t, t);		
 		}
 		if ((char *)de > top)
 			return -ENOSPC;
 	}
+	
+	PMFS_START_TIMING(read_de_t, t);
 	rlen = le16_to_cpu(de->de_len);
+	ino = de->ino;
+	PMFS_END_TIMING(read_de_t, t);
+	PMFS_STATS_ADD(meta_read, 10);
 
-	if (de->ino) {
+	if (ino) {
 		struct pmfs_direntry *de1;
 		pmfs_add_logentry(dir->i_sb, trans, &de->de_len,
 			sizeof(de->de_len), LE_DATA);
 		nlen = PMFS_DIR_REC_LEN(de->name_len);
 		de1 = (struct pmfs_direntry *)((char *)de + nlen);
+		PMFS_START_TIMING(write_de_t, t);
 		pmfs_memunlock_block(dir->i_sb, blk_base);
 		de1->de_len = cpu_to_le16(rlen - nlen);
 		de->de_len = cpu_to_le16(nlen);
 		pmfs_memlock_block(dir->i_sb, blk_base);
+		PMFS_END_TIMING(write_de_t, t);
+		PMFS_STATS_ADD(meta_write, 4);
 		de = de1;
 	} else {
 		pmfs_add_logentry(dir->i_sb, trans, &de->ino,
 			sizeof(de->ino), LE_DATA);
 	}
+
+	PMFS_START_TIMING(write_de_t, t);
 	pmfs_memunlock_block(dir->i_sb, blk_base);
 	/*de->file_type = 0;*/
 	if (inode) {
@@ -88,6 +109,8 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	memcpy(de->name, name, namelen);
 	pmfs_memlock_block(dir->i_sb, blk_base);
 	pmfs_flush_buffer(de, reclen, false);
+	PMFS_END_TIMING(write_de_t, t);
+	PMFS_STATS_ADD(meta_write, reclen);
 	/*
 	 * XXX shouldn't update any times until successful
 	 * completion of syscall, but too many callers depend
@@ -96,16 +119,20 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	dir->i_mtime = dir->i_ctime = current_time(dir);
 	/*dir->i_version++; */
 
+	PMFS_START_TIMING(write_pi_time_t, t);
 	pmfs_memunlock_inode(dir->i_sb, pidir);
 	pidir->i_mtime = cpu_to_le32(dir->i_mtime.tv_sec);
 	pidir->i_ctime = cpu_to_le32(dir->i_ctime.tv_sec);
 	pmfs_memlock_inode(dir->i_sb, pidir);
+	PMFS_END_TIMING(write_pi_time_t, t);
+	PMFS_STATS_ADD(meta_write, 8);
 	return 0;
 }
 
 /* adds a directory entry pointing to the inode. assumes the inode has
  * already been logged for consistency
  */
+// finish
 int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 		struct inode *inode)
 {
@@ -116,6 +143,7 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	struct pmfs_direntry *de;
 	char *blk_base;
 	struct pmfs_inode *pidir;
+	timing_t t, de_t;
 
 	if (!dentry->d_name.len)
 		return -EINVAL;
@@ -149,11 +177,15 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 		goto out;
 	}
 	/* No need to log the changes to this de because its a new block */
+
 	de = (struct pmfs_direntry *)blk_base;
+	PMFS_START_TIMING(write_de_t, de_t);
 	pmfs_memunlock_block(sb, blk_base);
 	de->ino = 0;
 	de->de_len = cpu_to_le16(sb->s_blocksize);
 	pmfs_memlock_block(sb, blk_base);
+	PMFS_END_TIMING(write_de_t, de_t);
+	PMFS_STATS_ADD(meta_write, 10);
 	/* Since this is a new block, no need to log changes to this block */
 	retval = pmfs_add_dirent_to_buf(NULL, dentry, inode, de, blk_base,
 		pidir);
@@ -175,7 +207,7 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 	int retval = -EINVAL;
 	unsigned long blocks, block;
 	char *blk_base = NULL;
-
+	timing_t t;
 	if (!de->d_name.len)
 		return -EINVAL;
 
@@ -197,17 +229,23 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 	if (prev_entry) {
 		pmfs_add_logentry(sb, trans, &prev_entry->de_len,
 				sizeof(prev_entry->de_len), LE_DATA);
+		PMFS_START_TIMING(write_de_t, t);
 		pmfs_memunlock_block(sb, blk_base);
 		prev_entry->de_len =
 			cpu_to_le16(le16_to_cpu(prev_entry->de_len) +
 				    le16_to_cpu(res_entry->de_len));
 		pmfs_memlock_block(sb, blk_base);
+		PMFS_END_TIMING(write_de_t, t);
+		PMFS_STATS_ADD(meta_write, 2);
 	} else {
 		pmfs_add_logentry(sb, trans, &res_entry->ino,
 				sizeof(res_entry->ino), LE_DATA);
+		PMFS_START_TIMING(write_de_t, t);
 		pmfs_memunlock_block(sb, blk_base);
 		res_entry->ino = 0;
 		pmfs_memlock_block(sb, blk_base);
+		PMFS_END_TIMING(write_de_t, t);
+		PMFS_STATS_ADD(meta_write, 8);
 	}
 	/*dir->i_version++; */
 	dir->i_ctime = dir->i_mtime = current_time(dir);
@@ -215,10 +253,13 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 	pidir = pmfs_get_inode(sb, dir->i_ino);
 	pmfs_add_logentry(sb, trans, pidir, MAX_DATA_PER_LENTRY, LE_DATA);
 
+	PMFS_START_TIMING(write_pi_time_t, t);
 	pmfs_memunlock_inode(sb, pidir);
 	pidir->i_mtime = cpu_to_le32(dir->i_mtime.tv_sec);
 	pidir->i_ctime = cpu_to_le32(dir->i_ctime.tv_sec);
 	pmfs_memlock_inode(sb, pidir);
+	PMFS_END_TIMING(write_pi_time_t, t);
+	PMFS_STATS_ADD(meta_write, 8);
 	retval = 0;
 out:
 	return retval;

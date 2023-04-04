@@ -183,6 +183,7 @@ static loff_t pmfs_llseek(struct file *file, loff_t offset, int origin)
  * TODO: Check if we can avoid calling pmfs_flush_buffer() for fsync. We use
  * movnti to write data to files, so we may want to avoid doing unnecessary
  * pmfs_flush_buffer() on fsync() */
+// not called
 int pmfs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	/* Sync from start to end[inclusive] */
