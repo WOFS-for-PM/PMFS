@@ -265,7 +265,6 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 	if (zero) {
 		size_t size;
 		bp = pmfs_get_block(sb, pmfs_get_block_off(sb, new_block_low, btype));
-		PMFS_START_TIMING(zero_t, t);
 		pmfs_memunlock_block(sb, bp); //TBDTBD: Need to fix this
 		if (btype == PMFS_BLOCK_TYPE_4K)
 			size = 0x1 << 12;
@@ -275,7 +274,6 @@ int pmfs_new_block(struct super_block *sb, unsigned long *blocknr,
 			size = 0x1 << 30;
 		memset_nt(bp, 0, size);
 		pmfs_memlock_block(sb, bp);
-		PMFS_END_TIMING(zero_t, t);
 		PMFS_STATS_ADD(zero, size);
 	}
 	*blocknr = new_block_low;

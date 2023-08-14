@@ -120,8 +120,8 @@ enum timing_category {
 	xip_write_t,
 	xip_write_fast_t,
 	internal_write_t,
-	memcpy_r_t,
-	memcpy_w_t,
+	memcpy_r_t,			    // memcpy_read
+	memcpy_w_t,				// memcpy_write
 	alloc_blocks_t,			
 	new_trans_t,			// n
 	add_log_t,				// n: write_log_entry_t
@@ -166,8 +166,7 @@ enum timing_category {
 	write_de_t,					// y
 	add_truncate_item_t,		// y
 	write_data_t,		
-	prefetch_t,
-	zero_t,
+	read_data_t,
 	TIMING_NUM,
 };
 

@@ -53,11 +53,10 @@ const char *Timingstring[TIMING_NUM] =
 	"read_journal_tail",
 	"read_genid",
 	"read_dentry",
-	"add_truncate_item",
 	"write_dentry",
+	"add_truncate_item",
 	"write_data",
-	"prefetch",
-	"zero",
+	"read_data",
 };
 
 unsigned long long Timingstats[TIMING_NUM];
@@ -122,11 +121,12 @@ void pmfs_print_meta_stats(void)
 	pr_info("meta_write: %llu\n", IOstats[meta_write]);
 	pr_info("data_read: %llu\n", IOstats[data_read]);
 	pr_info("data_write: %llu\n", IOstats[data_write]);
-	pr_info("meta_time: %llu\n", meta_time); 		// 时间
-	pr_info("meta_times: %llu\n", meta_times);		// 次数
+	pr_info("meta_time: %llu\n", meta_time); 		
+	pr_info("meta_times: %llu\n", meta_times);		
 	pr_info("data_write_time: %llu\n", Timingstats[memcpy_w_t]);
 	pr_info("data_read_time: %llu\n", Timingstats[memcpy_r_t]);
 	pr_info("COW_time: %llu\n", cow_write_time);
+	pr_info("read_time: %llu\n", Timingstats[read_data_t]);
 }
 
 

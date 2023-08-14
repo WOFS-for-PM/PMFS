@@ -1241,20 +1241,20 @@ retry:
 
 		for (; i < end_ino; i++) {
 			/* check if the inode is active. */
-			PMFS_START_TIMING(check_pi_free_t, free_t);
+			//PMFS_START_TIMING(check_pi_free_t, free_t);
 			PMFS_STATS_ADD(meta_read, 8);
 
 			if (le16_to_cpu(pi->i_links_count) == 0 &&
 			(le16_to_cpu(pi->i_mode) == 0 ||
 			 le32_to_cpu(pi->i_dtime))) {
 				/* this inode is free */
-				PMFS_END_TIMING(check_pi_free_t, free_t);
+				//PMFS_END_TIMING(check_pi_free_t, free_t);
 				break;
 			}
 
 			pi = (struct pmfs_inode *)((void *)pi +
 							PMFS_INODE_SIZE);
-			PMFS_END_TIMING(check_pi_free_t, free_t);
+			//PMFS_END_TIMING(check_pi_free_t, free_t);
 		}
 		
 		/* found a free inode */

@@ -42,8 +42,9 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 
 		de = (struct pmfs_direntry *)blk_base;
 		top = blk_base + dir->i_sb->s_blocksize - reclen;
+		
+		PMFS_START_TIMING(read_de_t, t);
 		while ((char *)de <= top) {
-			PMFS_START_TIMING(read_de_t, t);
 #if 0
 			if (!pmfs_check_dir_entry("pmfs_add_dirent_to_buf",
 			    dir, de, blk_base, offset))
@@ -57,18 +58,21 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 				nlen = PMFS_DIR_REC_LEN(de->name_len);
 				PMFS_STATS_ADD(meta_read, 9);
 				if ((rlen - nlen) >= reclen) {
-					PMFS_END_TIMING(read_de_t, t);
+					//PMFS_END_TIMING(read_de_t, t);
 					break;
 				}
 			} else if (rlen >= reclen) {
-				PMFS_END_TIMING(read_de_t, t);
+				//PMFS_END_TIMING(read_de_t, t);
 				break;
 			}
 			de = (struct pmfs_direntry *)((char *)de + rlen);
-			PMFS_END_TIMING(read_de_t, t);		
+			//PMFS_END_TIMING(read_de_t, t);		
 		}
-		if ((char *)de > top)
+		PMFS_END_TIMING(read_de_t, t);
+		if ((char *)de > top) {
+			PMFS_END_TIMING(read_de_t, t);
 			return -ENOSPC;
+		}
 	}
 	
 	PMFS_START_TIMING(read_de_t, t);

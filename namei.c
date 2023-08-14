@@ -109,10 +109,11 @@ int pmfs_search_dirblock(u8 *blk_base, struct inode *dir, struct qstr *child,
 	de = (struct pmfs_direntry *)blk_base;
 	dlimit = blk_base + dir->i_sb->s_blocksize;
 
+	PMFS_START_TIMING(read_de_t, t);
 	while ((char *)de < dlimit) {
 		/* this code is executed quadratically often */
 		/* do minimal checking `by hand' */
-		PMFS_START_TIMING(read_de_t, t);
+		//PMFS_START_TIMING(read_de_t, t);
 		if ((char *)de + namelen <= dlimit &&
 		    pmfs_match(namelen, name, de)) {
 			PMFS_STATS_ADD(meta_read, 10 + namelen);
@@ -131,13 +132,16 @@ int pmfs_search_dirblock(u8 *blk_base, struct inode *dir, struct qstr *child,
 		/* prevent looping on a bad block */
 		de_len = le16_to_cpu(de->de_len);
 		PMFS_STATS_ADD(meta_read, 2);
-		if (de_len <= 0)
+		if (de_len <= 0) {
+			PMFS_END_TIMING(read_de_t, t);
 			return -1;
+		}
 		offset += de_len;
 		pde = de;
 		de = (struct pmfs_direntry *)((char *)de + de_len);
-		PMFS_END_TIMING(read_de_t, t);
+		//PMFS_END_TIMING(read_de_t, t);
 	}
+	PMFS_END_TIMING(read_de_t, t);
 	return 0;
 }
 

@@ -33,7 +33,9 @@ do_xip_mapping_read(struct address_space *mapping,
 	loff_t isize, pos;
 	size_t copied = 0, error = 0;
 	timing_t memcpy_time;
+	timing_t read_time;
 
+	PMFS_START_TIMING(read_t, read_time);
 	pos = *ppos;
 	index = pos >> PAGE_SHIFT;
 	offset = pos & ~PAGE_MASK;
@@ -112,6 +114,7 @@ out:
 	if (filp)
 		file_accessed(filp);
 
+	PMFS_END_TIMING(read_data_t, read_time);
 	return (copied ? copied : error);
 }
 
@@ -604,7 +607,6 @@ static inline int __pmfs_get_block(struct inode *inode, pgoff_t pgoff,
 	return rc;
 }
 
-// finish
 int pmfs_get_xip_mem(struct address_space *mapping, pgoff_t pgoff, int create,
 		      void **kmem, unsigned long *pfn)
 {
