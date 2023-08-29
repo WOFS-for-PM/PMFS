@@ -119,6 +119,7 @@ static inline void pmfs_memlock_inode(struct super_block *sb,
 				       struct pmfs_inode *pi)
 {
 	/* pmfs_sync_inode(pi); */
+
 	if (pmfs_is_protected(sb))
 		__pmfs_memlock_range(pi, PMFS_SB_SIZE);
 }

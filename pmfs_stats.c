@@ -12,7 +12,9 @@ const char *Timingstring[TIMING_NUM] =
 	"internal_write",
 	"memcpy_read",
 	"memcpy_write",
+	"get_inode",
 	"alloc_blocks",
+	"clear_edge_blk",
 	"new_trans",
 	"add_logentry",
 	"commit_trans",
@@ -41,6 +43,7 @@ const char *Timingstring[TIMING_NUM] =
 	"write_pi",
 	"pmfs_clean_journal",
 	"new_trans_alloc_tail",
+	"read_trans",
 	"read_trans_tail",
 	"read_trans_head",
 	"read_trans_base",
@@ -57,6 +60,8 @@ const char *Timingstring[TIMING_NUM] =
 	"add_truncate_item",
 	"write_data",
 	"read_data",
+
+	"mutex",
 };
 
 unsigned long long Timingstats[TIMING_NUM];
@@ -91,6 +96,7 @@ void pmfs_print_meta_stats(void)
 		+ Timingstats[write_pi_root_t] + Timingstats[write_pi_height_t] 
 		+ Timingstats[write_pi_i_blocks_t] + Timingstats[write_pi_link_t]
 		+ Timingstats[write_pi_t] + Timingstats[write_trans_tail_t]
+		+ Timingstats[read_trans_t]
 		+ Timingstats[read_trans_tail_t] + Timingstats[read_trans_head_t]
 		+ Timingstats[read_trans_base_t] + Timingstats[read_trans_genid_t]
 		+ Timingstats[read_trans_type_t] + Timingstats[write_trans_genid_t]
@@ -107,6 +113,7 @@ void pmfs_print_meta_stats(void)
 		+ Countstats[write_pi_root_t] + Countstats[write_pi_height_t] 
 		+ Countstats[write_pi_i_blocks_t] + Countstats[write_pi_link_t]
 		+ Countstats[write_pi_t] + Countstats[write_trans_tail_t]
+		+ Countstats[read_trans_t]
 		+ Countstats[read_trans_tail_t] + Countstats[read_trans_head_t]
 		+ Countstats[read_trans_base_t] + Countstats[read_trans_genid_t]
 		+ Countstats[read_trans_type_t] + Countstats[write_trans_genid_t]

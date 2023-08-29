@@ -553,13 +553,10 @@ static int pmfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	}
 	pi = pmfs_get_inode(sb, inode->i_ino);
 	pmfs_memunlock_inode(sb, pi);
-	PMFS_START_TIMING(write_pi_link_t, t);
+	PMFS_START_TIMING(write_pi_t, t);
 	pi->i_links_count = cpu_to_le16(inode->i_nlink);
-	PMFS_END_TIMING(write_pi_link_t, t);
-
-	PMFS_START_TIMING(write_pi_size_t, t);
 	pi->i_size = cpu_to_le64(inode->i_size);
-	PMFS_END_TIMING(write_pi_size_t, t);
+	PMFS_END_TIMING(write_pi_t, t);
 	pmfs_memlock_inode(sb, pi);
 	PMFS_STATS_ADD(meta_write, 10);
 

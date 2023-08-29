@@ -578,7 +578,7 @@ pmfs_transaction_t *pmfs_new_transaction(struct super_block *sb,
 	uint64_t base;
 	int retry = 0;
 	timing_t log_time;
-	timing_t t;
+	timing_t t, t1;
 #if 0
 	trans = pmfs_current_transaction();
 
@@ -589,10 +589,8 @@ pmfs_transaction_t *pmfs_new_transaction(struct super_block *sb,
 #endif
 	/* If it is an undo log, need one more log-entry for commit record */
 	PMFS_START_TIMING(new_trans_t, log_time);
-
 	if (!sbi->redo_log)
 		max_log_entries++;
-
 	trans = pmfs_alloc_transaction();
 	if (!trans)
 		return ERR_PTR(-ENOMEM);
@@ -602,22 +600,20 @@ pmfs_transaction_t *pmfs_new_transaction(struct super_block *sb,
 	trans->num_entries = max_log_entries;
 	trans->t_journal = journal;
 	req_size = max_log_entries << LESIZE_SHIFT;
-
+	
 	mutex_lock(&sbi->journal_mutex);
 
-	PMFS_START_TIMING(read_trans_tail_t, t);
+	PMFS_START_TIMING(read_trans_t, t);
 	tail = le32_to_cpu(journal->tail);
-	PMFS_END_TIMING(read_trans_tail_t, t);
-	
-	PMFS_START_TIMING(read_trans_head_t, t);
 	head = le32_to_cpu(journal->head);
-	PMFS_END_TIMING(read_trans_head_t, t);
+	PMFS_END_TIMING(read_trans_t, t);
 
 	PMFS_STATS_ADD(meta_read, 8);
 	trace_nvm_access(NVM_READ, "Read Trans Tail", PMFS_SB(sb)->virt_addr, (char *)journal + offsetof(pmfs_journal_t, tail), sizeof(u32));
 	trace_nvm_access(NVM_READ, "Read Trans Head", PMFS_SB(sb)->virt_addr, (char *)journal + offsetof(pmfs_journal_t, head), sizeof(u32));
-
 	trans->transaction_id = sbi->next_transaction_id++;
+
+
 again:
 	PMFS_START_TIMING(read_trans_genid_t, t);
 	trans->gen_id = le16_to_cpu(journal->gen_id);
@@ -683,12 +679,11 @@ again:
 
 	mutex_unlock(&sbi->journal_mutex);
 	
-	
 	avail_size = avail_size - req_size;
 	/* wake up the log cleaner if required */
 	if ((sbi->jsize - avail_size) > (sbi->jsize >> 3))
 		wakeup_log_cleaner(sbi);
-
+	
 	pmfs_dbg_trans("new transaction tid %d nle %d avl sz %x sa %llx\n",
 		trans->transaction_id, max_log_entries, avail_size, base);
 	trans->start_addr = pmfs_get_block(sb, base);
@@ -703,8 +698,7 @@ journal_full:
 		le64_to_cpu(journal->base), le32_to_cpu(journal->size),
 		le32_to_cpu(journal->head), le32_to_cpu(journal->tail),
 		max_log_entries);
-	pmfs_err(sb, "avail size %u, freed size %u, request size %u\n",
-		avail_size, freed_size, req_size);
+	
 	pmfs_free_transaction(trans);
 	PMFS_END_TIMING(new_trans_t, log_time);
 	return ERR_PTR(-EAGAIN);
@@ -760,7 +754,7 @@ int pmfs_add_logentry(struct super_block *sb,
 	if (trans == NULL)
 		return -EINVAL;
 
-	PMFS_START_TIMING(c, add_log_time);
+	PMFS_START_TIMING(add_log_t, add_log_time);
 	le = trans->start_addr + trans->num_used;
 
 	if (size == 0) {

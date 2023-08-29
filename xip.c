@@ -162,14 +162,15 @@ static inline size_t memcpy_to_nvmm(char *kmem, loff_t offset,
 {
 	size_t copied;
 
-	if (support_clwb) {
-		copied = bytes - __copy_from_user(kmem + offset, buf, bytes);
-		pmfs_flush_buffer(kmem + offset, copied, 0);
-	} else {
-		copied = bytes - __copy_from_user_inatomic_nocache(kmem +
-						offset, buf, bytes);
-	}
-
+	// if (support_clwb) {
+	// 	copied = bytes - __copy_from_user(kmem + offset, buf, bytes);
+	// 	pmfs_flush_buffer(kmem + offset, copied, 0);
+	// } else {
+	// 	copied = bytes - __copy_from_user_inatomic_nocache(kmem +
+	// 					offset, buf, bytes);
+	// }
+	copied = bytes - __copy_from_user_inatomic_nocache(kmem +
+	 					offset, buf, bytes);
 	return copied;
 }
 
@@ -201,11 +202,11 @@ __pmfs_xip_file_write(struct address_space *mapping, const char __user *buf,
 			bytes = count;
 
 		status = pmfs_get_xip_mem(mapping, index, 1, &xmem, &xpfn);
+
 		if (status)
 			break;
 
 		PMFS_START_TIMING(memcpy_w_t, memcpy_time);
-		pmfs_xip_mem_protect(sb, xmem + offset, bytes, 1);
 		copied = memcpy_to_nvmm((char *)xmem, offset, buf, bytes);
 		pmfs_xip_mem_protect(sb, xmem + offset, bytes, 0);
 		PMFS_END_TIMING(memcpy_w_t, memcpy_time);
@@ -213,11 +214,11 @@ __pmfs_xip_file_write(struct address_space *mapping, const char __user *buf,
 		PMFS_STATS_ADD(data_write, copied);
 		trace_nvm_access(NVM_WRITE, "Write Data", PMFS_SB(sb)->virt_addr, xmem + offset, copied);
 
+		
 		/* if start or end dest address is not 8 byte aligned, 
 	 	 * __copy_from_user_inatomic_nocache uses cacheable instructions
 	 	 * (instead of movnti) to write. So flush those cachelines. */
 		pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
-
         	if (likely(copied > 0)) {
 			status = copied;
 
@@ -263,10 +264,10 @@ static ssize_t pmfs_file_write_fast(struct super_block *sb, struct inode *inode,
 	offset = pos & (sb->s_blocksize - 1);
 
 	PMFS_START_TIMING(memcpy_w_t, memcpy_time);
-	pmfs_xip_mem_protect(sb, xmem + offset, count, 1);
+	//pmfs_xip_mem_protect(sb, xmem + offset, count, 1);
 	copied = memcpy_to_nvmm((char *)xmem, offset, buf, count);
-	pmfs_xip_mem_protect(sb, xmem + offset, count, 0);
-	pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
+	//pmfs_xip_mem_protect(sb, xmem + offset, count, 0);
+	//pmfs_flush_edge_cachelines(pos, copied, xmem + offset);
 	PMFS_END_TIMING(memcpy_w_t, memcpy_time);
 	PMFS_STATS_ADD(data_write, copied);
 
@@ -329,6 +330,8 @@ static inline void pmfs_clear_edge_blk (struct super_block *sb, struct
 	void *ptr;
 	size_t count;
 	unsigned long blknr;
+	timing_t t;
+	PMFS_START_TIMING(clear_edge_blk_t, t);
 
 	if (new_blk) {
 		blknr = block >> (pmfs_inode_blk_shift(pi) -
@@ -346,6 +349,8 @@ static inline void pmfs_clear_edge_blk (struct super_block *sb, struct
 			pmfs_memlock_range(sb, ptr,  pmfs_inode_blk_size(pi));
 		}
 	}
+
+	PMFS_END_TIMING(clear_edge_blk_t, t);
 }
 
 ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
@@ -365,7 +370,12 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	bool same_block;
 	timing_t xip_write_time, xip_write_fast_time;
 	timing_t t;
+	timing_t clear_edge_blk_out_time;
+	timing_t t1, t2, t3, t4, t5, t6;
+	timing_t c1, c2, c3, c4, trivial_time;
+
 	u8 i_blk_type;
+
 
 	PMFS_START_TIMING(xip_write_t, xip_write_time);
 
@@ -382,9 +392,8 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 		ret = 0;
 		goto out;
 	}
-
 	pi = pmfs_get_inode(sb, inode->i_ino);  
-	
+
 	PMFS_START_TIMING(read_pi_i_blk_type_t, t);
 	i_blk_type = pi->i_blk_type;			
 	PMFS_END_TIMING(read_pi_i_blk_type_t, t);
@@ -398,9 +407,9 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	offset = pos & (blk_type_to_size[i_blk_type] - 1);
 	start_blk = pos >> sb->s_blocksize_bits;
 	end_blk = start_blk + num_blocks - 1;
-	
-	block = pmfs_find_data_block(inode, start_blk);  
 
+	block = pmfs_find_data_block(inode, start_blk);  
+	
 	/* Referring to the inode's block size, not 4K */
 	same_block = (((count + offset - 1) >>
 			blk_type_to_shift[i_blk_type]) == 0) ? 1 : 0;
@@ -416,10 +425,12 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 		max_logentries = MAX_METABLOCK_LENTRIES;
 
 	trans = pmfs_new_transaction(sb, MAX_INODE_LENTRIES + max_logentries);
+
 	if (IS_ERR(trans)) {
 		ret = PTR_ERR(trans);
 		goto out;
 	}
+	
 	pmfs_add_logentry(sb, trans, pi, MAX_DATA_PER_LENTRY, LE_DATA);
 
 	ret = file_remove_privs(filp);
@@ -450,11 +461,12 @@ ssize_t pmfs_xip_file_write(struct file *filp, const char __user *buf,
 	pmfs_clear_edge_blk(sb, pi, new_eblk, end_blk, eblk_offset, true);
 
 	written = __pmfs_xip_file_write(mapping, buf, count, pos, ppos);
+
 	if (written < 0 || written != count)
 		pmfs_dbg_verbose("write incomplete/failed: written %ld len %ld"
 			" pos %llx start_blk %lx num_blocks %lx\n",
 			written, count, pos, start_blk, num_blocks);
-
+	
 	pmfs_commit_transaction(sb, trans);
 	ret = written;
 out:

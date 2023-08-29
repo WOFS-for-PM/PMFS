@@ -120,37 +120,40 @@ enum timing_category {
 	xip_write_t,
 	xip_write_fast_t,
 	internal_write_t,
-	memcpy_r_t,			    // memcpy_read
-	memcpy_w_t,				// memcpy_write
+	memcpy_r_t,			    	// memcpy_read
+	memcpy_w_t,					// memcpy_write
+	get_inode_t,
 	alloc_blocks_t,			
-	new_trans_t,			// n
-	add_log_t,				// n: write_log_entry_t
-	commit_trans_t,			// n
+	clear_edge_blk_t,
+	new_trans_t,				// n
+	add_log_t,					// n: write_log_entry_t
+	commit_trans_t,				// n
 	mmap_fault_t,
 	fsync_t,
 	free_tree_t,
 	evict_inode_t,
 	recovery_t,
 	find_data_block_t,
-	read_metablock_t,		// y
-	write_metablock_t,		// y
-	read_pi_i_blk_type_t,	// y
-	read_pi_height_t,		// y
-	read_pi_i_blocks_t,		// y
-	read_pi_i_flag_t,		// y
-	read_pi_attr_t,			// y
-	read_pi_t,				// y
-	check_pi_free_t,		 	// y
+	read_metablock_t,			// y
+	write_metablock_t,			// y
+	read_pi_i_blk_type_t,		// y
+	read_pi_height_t,			// add to read_pi
+	read_pi_i_blocks_t,			// y
+	read_pi_i_flag_t,			// y
+	read_pi_attr_t,				// y
+	read_pi_t,					// y
+	check_pi_free_t,		 	// why delete this?
 	write_pi_time_and_size_t,	// y
 	write_pi_time_t,			// y
 	write_pi_size_t,			// y
 	write_pi_root_t,			// y
-	write_pi_height_t,			// y
+	write_pi_height_t,			// add to write_pi
 	write_pi_i_blocks_t,		// y
 	write_pi_link_t,			// y
 	write_pi_t,					// y
 	pmfs_clean_journal_t,
 	write_trans_tail_t,			// y
+	read_trans_t,				// new
 	read_trans_tail_t,			// y
 	read_trans_head_t,			// y
 	read_trans_base_t,			// y
@@ -167,6 +170,8 @@ enum timing_category {
 	add_truncate_item_t,		// y
 	write_data_t,		
 	read_data_t,
+
+	mutex_t,
 	TIMING_NUM,
 };
 
@@ -196,11 +201,15 @@ extern atomic64_t fsync_pages;
 typedef struct timespec timing_t;
 
 #define PMFS_START_TIMING(name, start) \
-	{if (measure_timing) getrawmonotonic(&start);}
+	{if (measure_timing) { \
+		PERSISTENT_BARRIER2(); \
+		getrawmonotonic(&start); \
+	}}
 
 #define PMFS_END_TIMING(name, start) \
 	{if (measure_timing) { \
 		timing_t end; \
+		PERSISTENT_BARRIER2(); \
 		getrawmonotonic(&end); \
 		Timingstats[name] += \
 			(end.tv_sec - start.tv_sec) * 1000000000 + \
@@ -544,16 +553,14 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 	u64 bp = 0;
 	u32 height, bit_shift;
 	unsigned int idx;
-	timing_t t, access_time, height_t, root_t;
+	timing_t t, access_time, pi_t;
 
 	PMFS_START_TIMING(find_data_block_t, t);
-	PMFS_START_TIMING(read_pi_height_t, height_t);
+	
+	PMFS_START_TIMING(read_pi_t, pi_t);
 	height = pi->height;
-	PMFS_END_TIMING(read_pi_height_t, height_t);
-
-	PMFS_START_TIMING(read_pi_height_t, root_t);
 	bp = le64_to_cpu(pi->root);
-	PMFS_END_TIMING(read_pi_height_t, root_t);
+	PMFS_END_TIMING(read_pi_t, pi_t);
 
 	PMFS_STATS_ADD(meta_read, 9);
 
@@ -565,7 +572,9 @@ static inline u64 __pmfs_find_data_block(struct super_block *sb,
 		PMFS_START_TIMING(read_metablock_t, access_time);
 		bp = le64_to_cpu(level_ptr[idx]);
 		PMFS_END_TIMING(read_metablock_t, access_time);
+
 		PMFS_STATS_ADD(meta_read, 8);
+
 		trace_nvm_access(NVM_READ, "Access Meta Block", PMFS_SB(sb)->virt_addr, level_ptr + idx, sizeof(u64));
 
 		if (bp == 0)
@@ -595,17 +604,24 @@ static inline struct pmfs_inode *pmfs_get_inode(struct super_block *sb,
 {
 	struct pmfs_super_block *ps = pmfs_get_super(sb);
 	struct pmfs_inode *inode_table = pmfs_get_inode_table(sb);
+	timing_t t;
 	u64 bp, block, ino_offset;
 
-	if (ino == 0)
+	PMFS_START_TIMING(get_inode_t, t);
+	if (ino == 0) {
+		PMFS_END_TIMING(get_inode_t, t);
 		return NULL;
+	}
 
 	block = ino >> pmfs_inode_blk_shift(inode_table);
 	bp = __pmfs_find_data_block(sb, inode_table, block);
 
-	if (bp == 0)
+	if (bp == 0) {
+		PMFS_END_TIMING(get_inode_t, t);
 		return NULL;
+	}
 	ino_offset = (ino & (pmfs_inode_blk_size(inode_table) - 1));
+	PMFS_END_TIMING(get_inode_t, t);
 	return (struct pmfs_inode *)((void *)ps + bp + ino_offset);
 }
 

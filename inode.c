@@ -563,13 +563,10 @@ static int pmfs_increase_btree_height(struct super_block *sb,
 	}
 	pmfs_memunlock_inode(sb, pi);
 
-	PMFS_START_TIMING(write_pi_root_t, t);
-	pi->root = prev_root;
-	PMFS_END_TIMING(write_pi_root_t, t);
-	
-	PMFS_START_TIMING(write_pi_height_t, t);
+	PMFS_START_TIMING(write_pi_t, t);
+	pi->root = prev_root;	
 	pi->height = height;
-	PMFS_END_TIMING(write_pi_height_t, t);
+	PMFS_END_TIMING(write_pi_t, t);
 
 	PMFS_STATS_ADD(meta_write, 9);
 	trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
@@ -721,12 +718,14 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 	timing_t t;
 	u8 i_blk_type;
 	
-	PMFS_START_TIMING(read_pi_height_t, t);
+	PMFS_START_TIMING(read_pi_t, t);
 	/* Hit Cache if lucky */
-	i_blk_type = pi->i_blk_type;				
-	PMFS_END_TIMING(read_pi_height_t, t);
+	i_blk_type = pi->i_blk_type;	
+	height = pi->height;			
+	PMFS_END_TIMING(read_pi_t, t);
 	trace_nvm_access(NVM_READ, "Read Inode Blk Type", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, i_blk_type), sizeof(u8));
-	PMFS_STATS_ADD(meta_read, 1);
+	trace_nvm_access(NVM_WRITE, "Read Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
+	PMFS_STATS_ADD(meta_read, 2);
 
 	data_bits = blk_type_to_shift[i_blk_type];
 	/* convert the 4K blocks into the actual blocks the inode is using */
@@ -740,11 +739,6 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 		   "first blocknr 0x%lx, last_blocknr 0x%lx\n",
 		   pi->height, file_blocknr, num, first_blocknr, last_blocknr);
 	
-	PMFS_START_TIMING(read_pi_height_t, t);
-	height = pi->height;
-	PMFS_END_TIMING(read_pi_height_t, t);
-	PMFS_STATS_ADD(meta_read, 1);
-	trace_nvm_access(NVM_WRITE, "Read Inode's Height", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, height), sizeof(u8));
 
 	blk_shift = height * meta_bits;
 
@@ -778,13 +772,10 @@ int __pmfs_alloc_blocks(pmfs_transaction_t *trans, struct super_block *sb,
 					   i_blk_type));
 			pmfs_memunlock_inode(sb, pi);
 			
-			PMFS_START_TIMING(write_pi_root_t, t);
+			PMFS_START_TIMING(write_pi_t, t);
 			pi->root = root;
-			PMFS_END_TIMING(write_pi_root_t, t);
-			
-			PMFS_START_TIMING(write_pi_height_t, t);
 			pi->height = height;
-			PMFS_END_TIMING(write_pi_height_t, t);
+			PMFS_END_TIMING(write_pi_t, t);
 
 			PMFS_STATS_ADD(meta_write, 9);
 			trace_nvm_access(NVM_WRITE, "Write Inode's Root", PMFS_SB(sb)->virt_addr, (char *)pi + offsetof(struct pmfs_inode, root), sizeof(__le64));
