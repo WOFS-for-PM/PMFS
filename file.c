@@ -66,6 +66,9 @@ hint_set:
 	return 0;
 }
 
+extern void __pmfs_truncate_blocks(struct inode *inode, loff_t start,
+				    loff_t end);
+
 static long pmfs_fallocate(struct file *file, int mode, loff_t offset,
 			    loff_t len)
 {
@@ -78,8 +81,10 @@ static long pmfs_fallocate(struct file *file, int mode, loff_t offset,
 	pmfs_transaction_t *trans;
 	loff_t new_size;
 
-	/* We only support the FALLOC_FL_KEEP_SIZE mode */
-	if (mode & ~FALLOC_FL_KEEP_SIZE)
+	/* We only support the FALLOC_FL_KEEP_SIZE and FALLOC_FL_PUNCH_HOLE
+	 * mode
+	 */
+	if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
 		return -EOPNOTSUPP;
 
 	if (S_ISDIR(inode->i_mode))
@@ -99,6 +104,18 @@ static long pmfs_fallocate(struct file *file, int mode, loff_t offset,
 		ret = -EACCES;
 		goto out;
 	}
+
+	if (mode & FALLOC_FL_PUNCH_HOLE) {
+		if (offset % PAGE_SIZE != 0 || len != PAGE_SIZE) {
+			printk("offset %lld, len %lld\n", offset, len);
+			ret = -EOPNOTSUPP;
+			goto out;
+		}
+		// TODO: truncate_pagecache?
+		__pmfs_truncate_blocks(inode, offset, offset + len);
+		goto out;
+	}
+
 	trans = pmfs_new_transaction(sb, MAX_INODE_LENTRIES +
 			MAX_METABLOCK_LENTRIES);
 	if (IS_ERR(trans)) {

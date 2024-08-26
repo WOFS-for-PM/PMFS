@@ -434,7 +434,7 @@ static inline unsigned long pmfs_sparse_last_blocknr(unsigned int height,
 /*
  * Free data blocks from inode in the range start <=> end
  */
-static void __pmfs_truncate_blocks(struct inode *inode, loff_t start,
+void __pmfs_truncate_blocks(struct inode *inode, loff_t start,
 				    loff_t end)
 {
 	struct super_block *sb = inode->i_sb;
