@@ -1,4 +1,13 @@
-# Porting PMFS to the latest Linux kernel
+# Artifacts for PMFS
+
+This repository contains the PMFS@EuroSys'12 source code for Linux 5.1.0. The full artifact evaluation steps can be obtained from [our AE repository](https://github.com/WOFS-for-PM/tests).
+
+## Branches Corresponding to the Paper
+
+| **Branch**              | **Description**                                                                 |
+|-------------------------|----------------------------------------------------------------------------------|
+| main                  | The original PMFS code                                   |
+| meta-trace       | PMFS with more detailed I/O timing breakdown                                                  |
 
 ## Introduction
 
